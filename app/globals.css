@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: #04080f;
+    --card: #0c1525;
+    --border: rgba(14, 165, 233, 0.12);
+    --electric: #0ea5e9;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: #04080f;
+    color: #e8f0fe;
+    font-family: var(--font-inter), system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background-color: rgba(14, 165, 233, 0.3);
+    color: #fff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #070d1a;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #162b3d;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #0ea5e9;
+  }
+}
+
+@layer components {
+  .tool-card {
+    @apply relative bg-navy-800 border rounded-2xl p-6 transition-all duration-300;
+    border-color: rgba(14, 165, 233, 0.12);
+    background: linear-gradient(135deg, rgba(14,165,233,0.04) 0%, rgba(12,21,37,1) 60%);
+  }
+  .tool-card:hover {
+    border-color: rgba(14, 165, 233, 0.35);
+    box-shadow: 0 0 32px rgba(14, 165, 233, 0.12);
+    transform: translateY(-2px);
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white transition-all duration-200;
+    background: linear-gradient(135deg, #0ea5e9, #0369a1);
+    box-shadow: 0 0 20px rgba(14, 165, 233, 0.3);
+  }
+  .btn-primary:hover {
+    box-shadow: 0 0 32px rgba(14, 165, 233, 0.5);
+    transform: translateY(-1px);
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all duration-200;
+    background: rgba(14, 165, 233, 0.1);
+    border: 1px solid rgba(14, 165, 233, 0.25);
+    color: #38bdf8;
+  }
+  .btn-secondary:hover {
+    background: rgba(14, 165, 233, 0.18);
+    border-color: rgba(14, 165, 233, 0.5);
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 rounded-xl text-white placeholder-slate-500 outline-none transition-all duration-200 text-sm;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(14, 165, 233, 0.15);
+  }
+  .input-field:focus {
+    border-color: rgba(14, 165, 233, 0.5);
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+    background: rgba(14, 165, 233, 0.05);
+  }
+
+  .section-header {
+    @apply text-center mb-12;
+  }
+  .section-tag {
+    @apply inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold tracking-widest uppercase mb-4;
+    background: rgba(14, 165, 233, 0.1);
+    border: 1px solid rgba(14, 165, 233, 0.2);
+    color: #38bdf8;
+  }
+
+  .severity-severe {
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+  }
+  .severity-moderate {
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold;
+    background: rgba(251, 146, 60, 0.15);
+    border: 1px solid rgba(251, 146, 60, 0.3);
+    color: #fdba74;
+  }
+  .severity-minor {
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold;
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+    color: #fde047;
+  }
+  .severity-none {
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold;
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+    color: #86efac;
+  }
+}
+
+/* Leaflet dark theme override */
+.leaflet-container {
+  background: #04080f !important;
+  font-family: var(--font-inter), system-ui, sans-serif;
+}
+.leaflet-popup-content-wrapper {
+  background: #0c1525 !important;
+  border: 1px solid rgba(14, 165, 233, 0.25) !important;
+  box-shadow: 0 0 24px rgba(14, 165, 233, 0.15) !important;
+  border-radius: 12px !important;
+  color: #e8f0fe !important;
+}
+.leaflet-popup-tip {
+  background: #0c1525 !important;
+}
+.leaflet-popup-close-button {
+  color: #94a3b8 !important;
+}
