@@ -92,7 +92,7 @@ export async function POST(req: Request) {
 
   const age = parseInt(roofAge) || 10;
   // Fall back to Denver coords if geocoding fails (keeps demo working without rate limits)
-  const coords = await geocode(address) ?? { lat: 39.7392, lon: -104.9903 };
+  const coords = await geocode(address) ?? { lat: 40.0150, lon: -105.2705 };
 
   let events: HailEvent[] = [];
 

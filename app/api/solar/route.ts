@@ -49,7 +49,7 @@ export async function POST(req: Request) {
   if (isNaN(bill) || bill < 20) return NextResponse.json({ error: "Please enter a valid monthly electric bill" }, { status: 400 });
 
   const coords = await geocode(address);
-  const lat = coords?.lat ?? 39.74; // default to Denver
+  const lat = coords?.lat ?? 40.0150; // default to Boulder
 
   const apiKey = process.env.NREL_API_KEY;
   if (apiKey && coords) {

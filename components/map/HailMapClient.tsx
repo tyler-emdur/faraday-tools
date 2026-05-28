@@ -28,7 +28,7 @@ const SEVERITY_CONFIG = {
 function FitBounds() {
   const map = useMap();
   useEffect(() => {
-    map.setView([39.7, -105.1], 8);
+    map.setView([40.015, -105.27], 9);
   }, [map]);
   return null;
 }
@@ -74,7 +74,7 @@ export default function HailMapClient() {
       </div>
 
       <MapContainer
-        center={[39.7, -105.1]}
+        center={[40.015, -105.27]}
         zoom={8}
         style={{ height: "600px", width: "100%", background: "#04080f" }}
         zoomControl={true}
