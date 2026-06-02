@@ -5,21 +5,25 @@ import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from "react-leaf
 import "leaflet/dist/leaflet.css";
 import Link from "next/link";
 
-const HAIL_EVENTS = [
-  { id: 1, lat: 39.7392, lng: -104.9903, city: "Denver — Capitol Hill", date: "Aug 14, 2025", maxSizeIn: 1.75, severity: "severe",   area: "5 sq mi" },
-  { id: 2, lat: 40.0150, lng: -105.2705, city: "Boulder — Table Mesa",  date: "Jun 22, 2025", maxSizeIn: 1.0,  severity: "moderate", area: "3 sq mi" },
-  { id: 3, lat: 39.5501, lng: -105.7821, city: "Conifer",               date: "Sep 5, 2024",  maxSizeIn: 2.5,  severity: "extreme",  area: "8 sq mi" },
-  { id: 4, lat: 39.9205, lng: -105.0866, city: "Westminster",           date: "Jul 31, 2025", maxSizeIn: 0.75, severity: "minor",    area: "2 sq mi" },
-  { id: 5, lat: 39.6066, lng: -104.9123, city: "Aurora — Southlands",   date: "Aug 28, 2025", maxSizeIn: 1.25, severity: "moderate", area: "4 sq mi" },
-  { id: 6, lat: 40.5853, lng: -105.0844, city: "Fort Collins — Midtown",date: "Jul 14, 2025", maxSizeIn: 0.5,  severity: "minor",    area: "1.5 sq mi"},
-  { id: 7, lat: 38.8339, lng: -104.8214, city: "Colorado Springs — Nor",date: "Jun 25, 2025", maxSizeIn: 1.5,  severity: "severe",   area: "6 sq mi" },
-  { id: 8, lat: 39.7555, lng: -105.2211, city: "Lakewood — Green Mtn",  date: "Aug 5, 2025",  maxSizeIn: 2.0,  severity: "severe",   area: "7 sq mi" },
-  { id: 9, lat: 39.8817, lng: -104.7677, city: "Commerce City",         date: "May 17, 2025", maxSizeIn: 0.75, severity: "minor",    area: "2.5 sq mi"},
-  { id:10, lat: 39.4817, lng: -106.0452, city: "Breckenridge area",     date: "Jul 8, 2025",  maxSizeIn: 1.0,  severity: "moderate", area: "4 sq mi" },
-];
+interface HailEvent {
+  id: number;
+  lat: number;
+  lng: number;
+  city: string;
+  date: string;
+  isoDate: string;
+  maxSizeIn: number;
+  severity: string;
+}
+
+interface MapData {
+  events: HailEvent[];
+  largest: HailEvent | null;
+  source: string;
+}
 
 const SEVERITY_CONFIG = {
-  extreme:  { color: "#ef4444", fill: "rgba(239,68,68,0.25)",  radius: 22, label: "Extreme (2.5\")" },
+  extreme:  { color: "#ef4444", fill: "rgba(239,68,68,0.25)",  radius: 22, label: "Extreme (≥2\")" },
   severe:   { color: "#f97316", fill: "rgba(249,115,22,0.2)",  radius: 18, label: "Severe (1.5–2\")" },
   moderate: { color: "#eab308", fill: "rgba(234,179,8,0.2)",   radius: 14, label: "Moderate (1–1.5\")" },
   minor:    { color: "#22c55e", fill: "rgba(34,197,94,0.15)",  radius: 10, label: "Minor (<1\")" },
@@ -28,13 +32,25 @@ const SEVERITY_CONFIG = {
 function FitBounds() {
   const map = useMap();
   useEffect(() => {
-    map.setView([40.015, -105.27], 9);
+    map.setView([39.7, -105.0], 8);
   }, [map]);
   return null;
 }
 
 export default function HailMapClient() {
-  const [selected, setSelected] = useState<typeof HAIL_EVENTS[0] | null>(null);
+  const [data, setData] = useState<MapData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/hail-map")
+      .then((r) => r.json())
+      .then((d) => { setData(d); setLoading(false); })
+      .catch(() => { setError(true); setLoading(false); });
+  }, []);
+
+  const events = data?.events ?? [];
+  const largest = data?.largest;
 
   return (
     <div className="relative w-full rounded-2xl overflow-hidden border" style={{ borderColor: "rgba(14,165,233,0.15)" }}>
@@ -51,7 +67,7 @@ export default function HailMapClient() {
           </div>
         ))}
         <div className="pt-1 border-t border-white/10 text-slate-500">
-          Last 12 months
+          Last 12 months · NOAA LSR
         </div>
       </div>
 
@@ -60,12 +76,28 @@ export default function HailMapClient() {
         className="absolute bottom-0 left-0 right-0 z-[1000] flex flex-wrap gap-4 px-4 py-3"
         style={{ background: "rgba(4,8,15,0.88)", backdropFilter: "blur(8px)", borderTop: "1px solid rgba(14,165,233,0.12)" }}
       >
-        <div className="text-xs text-slate-400">
-          <span className="text-white font-semibold">{HAIL_EVENTS.length}</span> events mapped
-        </div>
-        <div className="text-xs text-slate-400">
-          Largest: <span className="text-red-400 font-semibold">2.5" diameter</span> (Conifer, Sep 2024)
-        </div>
+        {loading ? (
+          <div className="text-xs text-slate-400 flex items-center gap-2">
+            <svg className="animate-spin w-3.5 h-3.5 text-sky-400" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            Loading storm data…
+          </div>
+        ) : error ? (
+          <div className="text-xs text-red-400">Failed to load storm data</div>
+        ) : (
+          <>
+            <div className="text-xs text-slate-400">
+              <span className="text-white font-semibold">{events.length}</span> events mapped
+            </div>
+            {largest && (
+              <div className="text-xs text-slate-400">
+                Largest: <span className="text-red-400 font-semibold">{largest.maxSizeIn}&quot; diameter</span> ({largest.city}, {largest.date})
+              </div>
+            )}
+          </>
+        )}
         <div className="ml-auto">
           <Link href="/hail" className="btn-primary text-xs px-4 py-2">
             Was your home affected? →
@@ -74,7 +106,7 @@ export default function HailMapClient() {
       </div>
 
       <MapContainer
-        center={[40.015, -105.27]}
+        center={[39.7, -105.0]}
         zoom={8}
         style={{ height: "600px", width: "100%", background: "#04080f" }}
         zoomControl={true}
@@ -85,8 +117,8 @@ export default function HailMapClient() {
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
           maxZoom={19}
         />
-        {HAIL_EVENTS.map((event) => {
-          const cfg = SEVERITY_CONFIG[event.severity as keyof typeof SEVERITY_CONFIG];
+        {events.map((event) => {
+          const cfg = SEVERITY_CONFIG[event.severity as keyof typeof SEVERITY_CONFIG] ?? SEVERITY_CONFIG.minor;
           return (
             <CircleMarker
               key={event.id}
@@ -97,7 +129,6 @@ export default function HailMapClient() {
               weight={2}
               opacity={0.9}
               fillOpacity={0.7}
-              eventHandlers={{ click: () => setSelected(event) }}
             >
               <Popup>
                 <div className="min-w-[220px]">
@@ -117,11 +148,7 @@ export default function HailMapClient() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-400">Max Hail Size</span>
-                      <span className="font-bold text-white">{event.maxSizeIn}"</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Affected Area</span>
-                      <span>{event.area}</span>
+                      <span className="font-bold text-white">{event.maxSizeIn}&quot;</span>
                     </div>
                   </div>
                   <a
