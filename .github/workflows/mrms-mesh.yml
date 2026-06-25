@@ -1,0 +1,43 @@
+name: MRMS MESH hail swath
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 min (GitHub may delay under load)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mrms-mesh
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install numpy pygrib rasterio shapely
+
+      - name: Build Colorado MESH GeoJSON
+        run: python scripts/mrms_mesh.py
+
+      - name: Publish to mrms-data branch
+        run: |
+          git config user.name "mrms-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git fetch origin mrms-data || true
+          BLOB=$(git hash-object -w out/mesh-colorado.json)
+          TREE=$(printf '100644 blob %s\tmesh-colorado.json\n' "$BLOB" | git mktree)
+          if PARENT=$(git rev-parse --verify origin/mrms-data 2>/dev/null); then
+            COMMIT=$(git commit-tree "$TREE" -p "$PARENT" -m "MRMS MESH update")
+          else
+            COMMIT=$(git commit-tree "$TREE" -m "MRMS MESH init")
+          fi
+          git push origin "$COMMIT:refs/heads/mrms-data"
