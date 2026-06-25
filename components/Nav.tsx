@@ -5,11 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 const links = [
-  { href: "/hail", label: "Hail Leads" },
-  { href: "/solar", label: "Solar Savings" },
-  { href: "/quote", label: "Get a Quote" },
   { href: "/map", label: "Hail Map" },
-  { href: "/admin", label: "Admin" },
 ];
 
 export default function Nav() {
@@ -28,7 +24,7 @@ export default function Nav() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-3 group">
+          <Link href="/map" className="flex items-center gap-3 group">
             <div
               className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-black text-sm"
               style={{ background: "linear-gradient(135deg,#0ea5e9,#0369a1)" }}

@@ -65,7 +65,7 @@ export default function HailTool() {
   const [address, setAddress] = useState("");
   const [roofAge, setRoofAge] = useState("13");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<HailResult | null>(null);
+  const [result, setResult] = useState<(HailResult & { dataSource?: string }) | null>(null);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({ name: "", phone: "", email: "", notes: "" });
@@ -217,12 +217,19 @@ export default function HailTool() {
           {/* Event timeline */}
           {result.events.length > 0 && (
             <div className="tool-card">
-              <h3 className="font-display font-semibold text-white mb-5 flex items-center gap-2">
-                <svg className="w-5 h-5 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Recent Hail Events Near This Address
-              </h3>
+              <div className="flex items-center justify-between gap-4 mb-5">
+                <h3 className="font-display font-semibold text-white flex items-center gap-2">
+                  <svg className="w-5 h-5 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Recent Hail Events Near This Address
+                </h3>
+                {result.dataSource && (
+                  <span className="text-xs text-sky-400/70 shrink-0">
+                    {result.dataSource}
+                  </span>
+                )}
+              </div>
               <div className="space-y-4">
                 {result.events.map((event, i) => (
                   <div

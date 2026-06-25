@@ -33,8 +33,11 @@ jobs:
           git config user.name "mrms-bot"
           git config user.email "actions@users.noreply.github.com"
           git fetch origin mrms-data || true
-          BLOB=$(git hash-object -w out/mesh-colorado.json)
-          TREE=$(printf '100644 blob %s\tmesh-colorado.json\n' "$BLOB" | git mktree)
+          MESH_BLOB=$(git hash-object -w out/mesh-colorado.json)
+          # vercel.json with ignoreCommand=exit 0 prevents Vercel from trying to
+          # build this data-only branch as a Next.js app
+          VERCEL_BLOB=$(printf '{"ignoreCommand":"exit 0"}\n' | git hash-object -w --stdin)
+          TREE=$(printf '100644 blob %s\tmesh-colorado.json\n100644 blob %s\tvercel.json\n' "$MESH_BLOB" "$VERCEL_BLOB" | git mktree)
           if PARENT=$(git rev-parse --verify origin/mrms-data 2>/dev/null); then
             COMMIT=$(git commit-tree "$TREE" -p "$PARENT" -m "MRMS MESH update")
           else
