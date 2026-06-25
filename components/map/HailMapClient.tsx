@@ -5,13 +5,35 @@ import { MapContainer, TileLayer, CircleMarker, Popup, GeoJSON, useMap } from "r
 import type { Map as LeafletMap } from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-const MESH_URL = "https://raw.githubusercontent.com/tyler-emdur/faraday-tools/mrms-data/mesh-colorado.json";
+const MESH_URL          = "https://raw.githubusercontent.com/tyler-emdur/faraday-tools/mrms-data/mesh-colorado.json";
+const MESH_NOWCAST_URL  = "https://raw.githubusercontent.com/tyler-emdur/faraday-tools/mrms-data/mesh-nowcast.json";
+const DUALPOL_URL       = "https://raw.githubusercontent.com/tyler-emdur/faraday-tools/mrms-data/dualpol-hail.json";
 
 interface MeshData {
   type: "FeatureCollection";
   features: any[];
   validTime?: string;
   maxInch?: number;
+  product?: string;
+}
+
+interface DualPolFeature {
+  geometry: { coordinates: [number, number] };
+  properties: {
+    radar_id: string;
+    validTime: string;
+    z_max_dbz: number;
+    zdr_min_db: number | null;
+    cc_min: number | null;
+    est_size_in: number;
+    confidence: "high" | "medium" | "low";
+  };
+}
+
+interface DualPolData {
+  type: "FeatureCollection";
+  features: DualPolFeature[];
+  generated?: string;
 }
 
 const MESH_FILL: Record<number, string> = { 1: "#22c55e", 2: "#eab308", 3: "#f97316", 4: "#ef4444" };
@@ -157,7 +179,11 @@ export default function HailMapClient() {
   const [error, setError] = useState(false);
   const [flyTarget, setFlyTarget] = useState<{ lat: number; lng: number; key: number } | null>(null);
   const [mesh, setMesh] = useState<MeshData | null>(null);
+  const [nowcast, setNowcast] = useState<MeshData | null>(null);
+  const [dualPol, setDualPol] = useState<DualPolData | null>(null);
   const [showSwath, setShowSwath] = useState(true);
+  const [showNowcast, setShowNowcast] = useState(true);
+  const [showDualPol, setShowDualPol] = useState(true);
   const [sortBy, setSortBy] = useState<SortBy>("score");
   const [minSize, setMinSize] = useState<MinSize>(0.5);
   const mapRef = useRef<LeafletMap | null>(null);
@@ -175,6 +201,14 @@ export default function HailMapClient() {
     fetch(MESH_URL, { cache: "no-store" })
       .then(r => (r.ok ? r.json() : null))
       .then(d => { if (d?.type === "FeatureCollection") setMesh(d); })
+      .catch(() => {});
+    fetch(MESH_NOWCAST_URL, { cache: "no-store" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.type === "FeatureCollection") setNowcast(d); })
+      .catch(() => {});
+    fetch(DUALPOL_URL, { cache: "no-store" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.type === "FeatureCollection") setDualPol(d); })
       .catch(() => {});
   }, []);
 
@@ -273,13 +307,20 @@ export default function HailMapClient() {
 
         {mesh && (
           <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={showSwath}
-              onChange={e => setShowSwath(e.target.checked)}
-              className="accent-sky-400 w-3.5 h-3.5"
-            />
-            <span>Radar swath (MRMS 24h)</span>
+            <input type="checkbox" checked={showSwath} onChange={e => setShowSwath(e.target.checked)} className="accent-sky-400 w-3.5 h-3.5" />
+            <span>Swath (24h)</span>
+          </label>
+        )}
+        {nowcast && (
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input type="checkbox" checked={showNowcast} onChange={e => setShowNowcast(e.target.checked)} className="accent-yellow-400 w-3.5 h-3.5" />
+            <span className="text-yellow-400/80">Nowcast (1h)</span>
+          </label>
+        )}
+        {dualPol && dualPol.features.length > 0 && (
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input type="checkbox" checked={showDualPol} onChange={e => setShowDualPol(e.target.checked)} className="accent-purple-400 w-3.5 h-3.5" />
+            <span className="text-purple-400/80">Dual-pol ({dualPol.features.length})</span>
           </label>
         )}
 
@@ -442,10 +483,19 @@ export default function HailMapClient() {
                 <span className="text-slate-400">{cfg.label}</span>
               </div>
             ))}
-            {showSwath && mesh && (
+            {(showSwath || showNowcast) && (mesh || nowcast) && (
               <div className="pt-1.5 mt-0.5 border-t text-slate-500" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
-                <div className="text-slate-300 font-medium">Radar swath = filled area</div>
-                {mesh.validTime && <div>24h max · {exactTime(mesh.validTime)}</div>}
+                <div className="text-slate-300 font-medium">Filled = radar swath</div>
+                {showSwath && mesh?.validTime && <div className="text-slate-600">24h max · {exactTime(mesh.validTime)}</div>}
+                {showNowcast && nowcast?.validTime && <div className="text-yellow-400/60">1h nowcast · {exactTime(nowcast.validTime)}</div>}
+              </div>
+            )}
+            {showDualPol && dualPol && dualPol.features.length > 0 && (
+              <div className="pt-1.5 mt-0.5 border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "#a855f7" }} />
+                  <span className="text-purple-400/80">Dual-pol confirmed</span>
+                </div>
               </div>
             )}
           </div>
@@ -479,10 +529,60 @@ export default function HailMapClient() {
                 style={(feature?: any) => {
                   const sev = feature?.properties?.sev ?? 1;
                   const c = MESH_FILL[sev] ?? "#22c55e";
-                  return { stroke: false, weight: 0, fillColor: c, fillOpacity: 0.4 };
+                  return { stroke: false, weight: 0, fillColor: c, fillOpacity: 0.35 };
                 }}
               />
             )}
+
+            {/* 1-hour nowcast: brighter fill to stand out from the 24h swath */}
+            {showNowcast && nowcast && (
+              <GeoJSON
+                key={(nowcast.validTime || "nowcast") + "-nc"}
+                data={nowcast as any}
+                style={(feature?: any) => {
+                  const sev = feature?.properties?.sev ?? 1;
+                  const c = MESH_FILL[sev] ?? "#22c55e";
+                  return { stroke: true, color: c, weight: 1, fillColor: c, fillOpacity: 0.55 };
+                }}
+              />
+            )}
+
+            {/* Dual-pol confirmed hail from NEXRAD Level-II */}
+            {showDualPol && dualPol && dualPol.features.map((f, i) => {
+              const [lng, lat] = f.geometry.coordinates;
+              const { est_size_in, confidence: conf, radar_id, validTime, z_max_dbz, zdr_min_db, cc_min } = f.properties;
+              const color = conf === "high" ? "#a855f7" : conf === "medium" ? "#c084fc" : "#d8b4fe";
+              return (
+                <CircleMarker
+                  key={`dp-${i}`}
+                  center={[lat, lng]}
+                  radius={5}
+                  fillColor={color}
+                  color="#ffffff"
+                  weight={1.5}
+                  opacity={0.9}
+                  fillOpacity={0.7}
+                >
+                  <Popup>
+                    <div style={{ minWidth: "190px", fontFamily: "monospace" }}>
+                      <div style={{ color: "#a855f7", fontWeight: 700, marginBottom: "6px" }}>
+                        Dual-Pol Hail ({conf} confidence)
+                      </div>
+                      <table style={{ fontSize: "11px", width: "100%", borderCollapse: "collapse" }}>
+                        <tbody>
+                          <tr><td style={{ color: "#64748b", paddingRight: "8px" }}>Radar</td><td style={{ color: "#e2e8f0" }}>{radar_id}</td></tr>
+                          <tr><td style={{ color: "#64748b" }}>Est. size</td><td style={{ color: "#e2e8f0", fontWeight: 600 }}>{est_size_in}&quot;</td></tr>
+                          <tr><td style={{ color: "#64748b" }}>Z (refl.)</td><td style={{ color: "#e2e8f0" }}>{z_max_dbz} dBZ</td></tr>
+                          {zdr_min_db != null && <tr><td style={{ color: "#64748b" }}>ZDR</td><td style={{ color: "#e2e8f0" }}>{zdr_min_db} dB</td></tr>}
+                          {cc_min != null && <tr><td style={{ color: "#64748b" }}>CC</td><td style={{ color: "#e2e8f0" }}>{cc_min}</td></tr>}
+                          <tr><td style={{ color: "#64748b" }}>Time</td><td style={{ color: "#e2e8f0" }}>{exactTime(validTime)}</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
 
             {filteredEvents.map((event) => {
               const cfg = SEVERITY_CONFIG[event.severity as keyof typeof SEVERITY_CONFIG] ?? SEVERITY_CONFIG.minor;

@@ -44,6 +44,25 @@ interface HailEvent {
 const COLORADO_BBOX: BBox = { minLat: 36.95, maxLat: 41.05, minLng: -109.06, maxLng: -102.04 };
 const DENVER_BBOX: BBox = { minLat: 39.45, maxLat: 40.15, minLng: -105.35, maxLng: -104.55 };
 
+// Published MRMS MESH swath — used to cross-validate spotter report sizes
+const MESH_GEOJSON_URL =
+  "https://raw.githubusercontent.com/tyler-emdur/faraday-tools/mrms-data/mesh-colorado.json";
+// 1-hour max MESH — near-real-time layer produced by the same Action
+const MESH_NOWCAST_URL =
+  "https://raw.githubusercontent.com/tyler-emdur/faraday-tools/mrms-data/mesh-nowcast.json";
+
+// Max cap applied when a spotter report exceeds what MRMS detected (1.5× band upper bound).
+// sev 4 (≥2") has no cap from MESH — radar confirming large hail, trust the spotter.
+const MESH_BAND_CAP: Record<number, number> = { 1: 1.5, 2: 2.25, 3: 3.0 };
+
+interface MeshGrid {
+  features: Array<{
+    geometry: { type: string; coordinates: unknown };
+    properties: { sev: number };
+  }>;
+  validTime?: string;
+}
+
 function inBBox(lat: number, lng: number, b: BBox) {
   return lat >= b.minLat && lat <= b.maxLat && lng >= b.minLng && lng <= b.maxLng;
 }
@@ -289,6 +308,103 @@ async function geocodeNEXRAD(
   return result;
 }
 
+// ─── Data quality helpers ────────────────────────────────────────────────────
+
+async function fetchMeshGrid(url: string): Promise<MeshGrid | null> {
+  try {
+    const res = await fetch(url, { next: { revalidate: 1800 } });
+    return res.ok ? await res.json() : null;
+  } catch { return null; }
+}
+
+// Ray-casting point-in-polygon. GeoJSON rings are [[lng, lat], ...].
+function pointInRing(lat: number, lng: number, ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+    if ((yi > lat) !== (yj > lat) && lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)
+      inside = !inside;
+  }
+  return inside;
+}
+
+// Returns the MRMS MESH severity (1–4) at a point, or 0 if not covered.
+function meshSevAt(lat: number, lng: number, mesh: MeshGrid): number {
+  for (const f of mesh.features) {
+    const sev = f.properties.sev;
+    const geom = f.geometry as { type: string; coordinates: number[][][][] | number[][][] };
+    const polys: number[][][][] =
+      geom.type === "Polygon"
+        ? [geom.coordinates as number[][][]]
+        : (geom.coordinates as number[][][][]);
+    for (const poly of polys) {
+      if (pointInRing(lat, lng, poly[0]) && !poly.slice(1).some((h) => pointInRing(lat, lng, h)))
+        return sev;
+    }
+  }
+  return 0;
+}
+
+// Fetch 0°C isotherm height from open-meteo (free, no key; HRRR-equivalent accuracy).
+// Returns km above sea level; falls back to Colorado summer average on failure.
+async function fetchFreezingLevelKm(): Promise<number> {
+  try {
+    const res = await fetch(
+      "https://api.open-meteo.com/v1/forecast?latitude=39.5&longitude=-105.5" +
+        "&hourly=freezinglevel_height&timezone=UTC&forecast_days=1",
+      { next: { revalidate: 3600 } }
+    );
+    if (!res.ok) return 3.8;
+    const d = await res.json();
+    const heights: number[] = d?.hourly?.freezinglevel_height ?? [];
+    const h = heights[new Date().getUTCHours()] ?? heights[0];
+    return typeof h === "number" ? Math.round((h / 1000) * 10) / 10 : 3.8;
+  } catch { return 3.8; }
+}
+
+// Hail loses diameter falling through warm air below the freezing level.
+// Formula tuned for Colorado's dry air (hail preserves better than humid climates).
+// Applied to ground observations only — NEXRAD MESH is already a surface estimate.
+function meltCorrect(sizeIn: number, freezingKm: number): number {
+  const factor = Math.exp(-0.04 * Math.max(0, freezingKm - 2.5));
+  return Math.max(0.25, Math.round(sizeIn * factor * 100) / 100);
+}
+
+// Cluster point-source events within ~8 miles (0.1°) and 60 minutes.
+// Keeps the most credible reporter from each cluster; absorbs the max size seen.
+// This eliminates the "4 identical 4-inch reports" problem from the same storm cell.
+function dedupePointSources(events: HailEvent[]): HailEvent[] {
+  const CRED: Partial<Record<string, number>> = { LSR: 3, CoCoRaHS: 2, mPING: 1 };
+  // Process highest-credibility first so the anchor is always the best reporter
+  const sorted = [...events].sort((a, b) => (CRED[b.source] ?? 0) - (CRED[a.source] ?? 0));
+  const used = new Set<number>();
+  const out: HailEvent[] = [];
+
+  for (let i = 0; i < sorted.length; i++) {
+    if (used.has(i)) continue;
+    const anchor = { ...sorted[i] };
+    used.add(i);
+    const tA = new Date(anchor.isoDate).getTime();
+
+    for (let j = i + 1; j < sorted.length; j++) {
+      if (used.has(j)) continue;
+      const o = sorted[j];
+      if (Math.abs(anchor.lat - o.lat) > 0.1 || Math.abs(anchor.lng - o.lng) > 0.1) continue;
+      if (Math.abs(tA - new Date(o.isoDate).getTime()) > 3600000) continue;
+      // Same storm cluster — keep the anchor reporter but take the max size observed
+      if (o.maxSizeIn > anchor.maxSizeIn) {
+        anchor.maxSizeIn = o.maxSizeIn;
+        anchor.severity = sizeToSeverity(o.maxSizeIn);
+      }
+      used.add(j);
+    }
+    out.push(anchor);
+  }
+  return out;
+}
+
+// ─── NWS Active Alerts ───────────────────────────────────────────────────────
+
 // NWS Active Alerts — real-time severe thunderstorm / tornado warnings with hail sizes.
 // This fires BEFORE any LSR/SWDI reports exist, giving the earliest signal for a new event.
 async function fetchNWSAlerts(bbox: BBox): Promise<HailEvent[]> {
@@ -364,15 +480,17 @@ export async function GET(req: Request) {
   const ets = now.toISOString().split(".")[0] + "Z";
   const sts = new Date(now.getTime() - days * 86400000).toISOString().split(".")[0] + "Z";
 
-  // Each source is independent and returns [] on any failure — one bad feed
-  // can never break the map.
-  const [swdiEvents, iemEvents, cocoEvents, mpingEvents, alertEvents] = await Promise.all([
-    fetchSWDI(bbox, days),
-    fetchIEM(sts, ets, bbox),
-    fetchCoCoRaHS(days, bbox),
-    fetchMPING(sts, ets, bbox),
-    fetchNWSAlerts(bbox),
-  ]);
+  // Fetch all sources and ancillary data in parallel — failures return safe defaults
+  const [swdiEvents, iemEvents, cocoEvents, mpingEvents, alertEvents, meshGrid, freezingKm] =
+    await Promise.all([
+      fetchSWDI(bbox, days),
+      fetchIEM(sts, ets, bbox),
+      fetchCoCoRaHS(days, bbox),
+      fetchMPING(sts, ets, bbox),
+      fetchNWSAlerts(bbox),
+      fetchMeshGrid(MESH_GEOJSON_URL),
+      fetchFreezingLevelKm(),
+    ]);
 
   // Replace "Radar cell XXXX" labels with real neighborhood names from Nominatim
   const geocoded = await geocodeNEXRAD(swdiEvents);
@@ -382,9 +500,41 @@ export async function GET(req: Request) {
     return geo ? { ...e, town: geo.town, county: geo.county } : e;
   });
 
-  // Merge; dedupe each point source against radar on same-day + proximity (~3 km)
+  // ── Point-source quality pipeline ─────────────────────────────────────────
+
+  // Step 1: cluster spotter reports within 8 mi + 60 min → eliminates duplicate
+  // reports of the same storm cell (the "4 different 4-inch hail" problem)
+  const dedupedPoints = dedupePointSources([...iemEvents, ...cocoEvents, ...mpingEvents]);
+
+  // Step 2: MESH cross-validation — cap spotter sizes that radar doesn't support.
+  // Only applied to today's events; MESH_Max_1440min rolls off older dates.
+  const validatedPoints = dedupedPoints.map((e) => {
+    if (e.daysAgo > 0 || !meshGrid) return e;
+    const sev = meshSevAt(e.lat, e.lng, meshGrid);
+    const cap = MESH_BAND_CAP[sev];
+    if (cap && e.maxSizeIn > cap) {
+      return { ...e, maxSizeIn: cap, severity: sizeToSeverity(cap) };
+    }
+    // Radar shows no hail here but spotter says > 1.5" — apply conservative floor
+    if (sev === 0 && e.maxSizeIn > 1.5) {
+      return { ...e, maxSizeIn: 1.0, severity: sizeToSeverity(1.0) };
+    }
+    return e;
+  });
+
+  // Step 3: melt correction — adjust surface size for the freezing level altitude.
+  // Higher freezing level = more melt = smaller actual hailstone at ground level.
+  const correctedPoints = validatedPoints.map((e) => {
+    const corrected = meltCorrect(e.maxSizeIn, freezingKm);
+    return corrected < e.maxSizeIn
+      ? { ...e, maxSizeIn: corrected, severity: sizeToSeverity(corrected) }
+      : e;
+  });
+
+  // ── Merge sources ──────────────────────────────────────────────────────────
+
   const combined = [...namedSwdi];
-  for (const pt of [...iemEvents, ...cocoEvents, ...mpingEvents]) {
+  for (const pt of correctedPoints) {
     const ptDay = pt.isoDate.slice(0, 10);
     const covered = namedSwdi.some((s) => {
       if (s.isoDate.slice(0, 10) !== ptDay) return false;
@@ -395,7 +545,6 @@ export async function GET(req: Request) {
   // NWS alerts are real-time warning polygons — not confirmed observations, so skip proximity dedup
   combined.push(...alertEvents);
 
-  // Dedupe exact-ish duplicates (same spot, same day)
   const seen = new Set<string>();
   const events = combined
     .filter((e) => {
@@ -416,6 +565,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     events,
     largest,
+    freezingLevelKm: freezingKm,
     source: "NOAA NEXRAD (SWDI) + NWS LSR + CoCoRaHS + mPING + NWS Alerts",
     sourceCounts: {
       radar: events.filter((e) => e.source === "NEXRAD").length,

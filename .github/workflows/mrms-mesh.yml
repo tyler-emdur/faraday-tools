@@ -23,24 +23,43 @@ jobs:
           python-version: "3.11"
 
       - name: Install deps
-        run: pip install numpy pygrib rasterio shapely
+        run: pip install numpy pygrib rasterio shapely arm-pyart
 
-      - name: Build Colorado MESH GeoJSON
+      - name: Build Colorado MESH GeoJSON (24h + 1h nowcast)
         run: python scripts/mrms_mesh.py
+
+      - name: Build dual-pol hail detections
+        # Runs independently — failure here doesn't block the MESH publish
+        run: python scripts/nexrad_dualpol.py --hours 2 --out out/dualpol-hail.json || true
 
       - name: Publish to mrms-data branch
         run: |
           git config user.name "mrms-bot"
           git config user.email "actions@users.noreply.github.com"
           git fetch origin mrms-data || true
+
           MESH_BLOB=$(git hash-object -w out/mesh-colorado.json)
+          NOWCAST_BLOB=$(git hash-object -w out/mesh-nowcast.json)
+
+          # dual-pol output may not exist if no storms were detected — use empty FC as fallback
+          if [ -f out/dualpol-hail.json ]; then
+            DUALPOL_BLOB=$(git hash-object -w out/dualpol-hail.json)
+          else
+            DUALPOL_BLOB=$(printf '{"type":"FeatureCollection","features":[]}\n' | git hash-object -w --stdin)
+          fi
+
           # vercel.json with ignoreCommand=exit 0 prevents Vercel from trying to
           # build this data-only branch as a Next.js app
           VERCEL_BLOB=$(printf '{"ignoreCommand":"exit 0"}\n' | git hash-object -w --stdin)
-          TREE=$(printf '100644 blob %s\tmesh-colorado.json\n100644 blob %s\tvercel.json\n' "$MESH_BLOB" "$VERCEL_BLOB" | git mktree)
+
+          TREE=$(printf \
+            '100644 blob %s\tmesh-colorado.json\n100644 blob %s\tmesh-nowcast.json\n100644 blob %s\tdualpol-hail.json\n100644 blob %s\tvercel.json\n' \
+            "$MESH_BLOB" "$NOWCAST_BLOB" "$DUALPOL_BLOB" "$VERCEL_BLOB" \
+            | git mktree)
+
           if PARENT=$(git rev-parse --verify origin/mrms-data 2>/dev/null); then
-            COMMIT=$(git commit-tree "$TREE" -p "$PARENT" -m "MRMS MESH update")
+            COMMIT=$(git commit-tree "$TREE" -p "$PARENT" -m "MRMS MESH + dual-pol update")
           else
-            COMMIT=$(git commit-tree "$TREE" -m "MRMS MESH init")
+            COMMIT=$(git commit-tree "$TREE" -m "MRMS MESH + dual-pol init")
           fi
           git push origin "$COMMIT:refs/heads/mrms-data"

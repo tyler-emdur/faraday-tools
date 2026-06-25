@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Pull the latest NOAA MRMS MESH_Max_1440min product (24-hour maximum estimated
-hail size, gridded ~1km nationwide), clip it to Colorado, and polygonize it into
-hail-size "swath" bands as GeoJSON. This is the same class of gridded radar data
-the commercial hail-map services sell — it's free from NOAA.
+Pull NOAA MRMS MESH products, clip to Colorado, and polygonize into hail-size
+swath bands as GeoJSON.
 
-Output: out/mesh-colorado.json (a GeoJSON FeatureCollection of severity bands).
+Produces two outputs:
+  out/mesh-colorado.json  — MESH_Max_1440min (24-hr max); bias-corrected toward
+                            ground truth (same class of data commercial services sell)
+  out/mesh-nowcast.json   — MESH_Max_60min  (1-hr max); near-real-time, no bias
+                            correction (updated every 30 min by the GitHub Action)
 """
 import gzip
-import io
 import json
 import os
 import re
@@ -22,18 +23,13 @@ from rasterio.transform import from_origin
 from rasterio.features import shapes
 from shapely.geometry import shape, mapping
 
-BASE = "https://mrms.ncep.noaa.gov/2D/MESH_Max_1440min/"
-# Colorado bounds (lon in standard -180..180)
+BASE = "https://mrms.ncep.noaa.gov/2D/"
 CO = dict(min_lat=36.95, max_lat=41.05, min_lon=-109.06, max_lon=-102.04)
 
-# MRMS MESH estimates the *maximum possible* hail size, so it runs high vs. what
-# actually fell. We apply a mild correction toward ground truth. Kept conservative
-# on purpose: under-calling would hide towns that really got hammered, which is the
-# opposite of what we want for door-knocking. Tune between ~0.7 (aggressive) and
-# 1.0 (raw). 0.85 nudges sizes down without dropping big events out of the top band.
+# MRMS MESH over-estimates vs ground truth; nudge toward observed sizes.
+# 0.85 is conservative — keeps big events visible while reducing phantom 4" reports.
 MESH_BIAS = float(os.environ.get("MESH_BIAS", "0.85"))
 
-# inches -> severity class. 0 is dropped.
 BANDS = [
     (0.75, 1.00, 1, "0.75–1\""),
     (1.00, 1.50, 2, "1–1.5\""),
@@ -42,12 +38,14 @@ BANDS = [
 ]
 
 
-def latest_file_url():
-    html = urllib.request.urlopen(BASE, timeout=60).read().decode("utf-8", "ignore")
-    files = sorted(set(re.findall(r"MRMS_MESH_Max_1440min_[^\"']+\.grib2\.gz", html)))
+def latest_file_url(product: str) -> tuple[str, str]:
+    url = f"{BASE}{product}/"
+    html = urllib.request.urlopen(url, timeout=60).read().decode("utf-8", "ignore")
+    pattern = rf"MRMS_{re.escape(product)}_[^\"']+\.grib2\.gz"
+    files = sorted(set(re.findall(pattern, html)))
     if not files:
-        raise RuntimeError("No MESH files found at " + BASE)
-    return BASE + files[-1], files[-1]
+        raise RuntimeError(f"No files found for product {product} at {url}")
+    return url + files[-1], files[-1]
 
 
 def parse_valid_time(name: str) -> str:
@@ -65,18 +63,25 @@ def classify(inches: np.ndarray) -> np.ndarray:
     return out
 
 
-def main():
-    url, name = latest_file_url()
-    print(f"Downloading {url}", file=sys.stderr)
+def round_ring(coords):
+    return [[round(x, 4), round(y, 4)] for x, y in coords]
+
+
+def process_product(product: str, output_path: str, bias: float = 1.0) -> None:
+    """Download, process, and write one MRMS MESH product to output_path."""
+    url, name = latest_file_url(product)
+    print(f"[{product}] Downloading {url}", file=sys.stderr)
     raw = urllib.request.urlopen(url, timeout=180).read()
     grib_bytes = gzip.decompress(raw)
-    with open("/tmp/mesh.grib2", "wb") as f:
+
+    tmp = f"/tmp/mesh_{product}.grib2"
+    with open(tmp, "wb") as f:
         f.write(grib_bytes)
 
-    grbs = pygrib.open("/tmp/mesh.grib2")
+    grbs = pygrib.open(tmp)
     grb = grbs[1]
 
-    # MRMS lons are 0..360; CO is ~251..258 in that convention.
+    # MRMS lons are 0..360; CO sits at ~251..258 in that convention.
     data, lats, lons = grb.data(
         lat1=CO["min_lat"], lat2=CO["max_lat"],
         lon1=CO["min_lon"] + 360, lon2=CO["max_lon"] + 360,
@@ -86,14 +91,16 @@ def main():
     lons = np.asarray(lons, dtype=float)
     lons = np.where(lons > 180, lons - 360, lons)
 
-    # Ensure row 0 = north (descending latitude) for a clean north-up transform.
+    # Ensure row 0 = north for a correct north-up raster transform.
     if lats[0, 0] < lats[-1, 0]:
-        data = np.flipud(data); lats = np.flipud(lats); lons = np.flipud(lons)
+        data = np.flipud(data)
+        lats = np.flipud(lats)
+        lons = np.flipud(lons)
 
     # MESH is in mm; negatives are missing / no-coverage.
     data = np.where(data < 0, 0.0, data)
     inches_raw = data / 25.4
-    inches = inches_raw * MESH_BIAS
+    inches = inches_raw * bias
     sev = classify(inches)
 
     dx = abs(float(lons[0, 1] - lons[0, 0]))
@@ -102,21 +109,18 @@ def main():
     north = float(lats[0, 0]) + dy / 2
     transform = from_origin(west, north, dx, dy)
 
-    features = []
     label_for = {cls: lbl for _, _, cls, lbl in BANDS}
-    for geom, val in shapes(sev.astype(np.int32), mask=sev > 0, transform=transform, connectivity=8):
+    features = []
+    for geom_dict, val in shapes(sev.astype(np.int32), mask=sev > 0, transform=transform, connectivity=8):
         cls = int(val)
-        poly = shape(geom).simplify(0.008, preserve_topology=True)
+        poly = shape(geom_dict).simplify(0.008, preserve_topology=True)
         if poly.is_empty or poly.area < 1e-5:
             continue
-        # round coords to keep the file small
-        def r(coords):
-            return [[round(x, 4), round(y, 4)] for x, y in coords]
         g = mapping(poly)
         if g["type"] == "Polygon":
-            g["coordinates"] = [r(ring) for ring in g["coordinates"]]
+            g = {**g, "coordinates": [round_ring(ring) for ring in g["coordinates"]]}
         elif g["type"] == "MultiPolygon":
-            g["coordinates"] = [[r(ring) for ring in p] for p in g["coordinates"]]
+            g = {**g, "coordinates": [[round_ring(ring) for ring in p] for p in g["coordinates"]]}
         features.append({
             "type": "Feature",
             "properties": {"sev": cls, "label": label_for[cls]},
@@ -124,21 +128,43 @@ def main():
         })
 
     max_in = round(float(inches.max()), 2) if inches.size else 0.0
-    max_in_raw = round(float(inches_raw.max()), 2) if inches_raw.size else 0.0
     out = {
         "type": "FeatureCollection",
         "generated": datetime.now(timezone.utc).isoformat(),
         "validTime": parse_valid_time(name),
-        "source": "NOAA MRMS MESH_Max_1440min (24-hr max estimated hail size)",
+        "product": product,
+        "bias": bias,
         "maxInch": max_in,
-        "maxInchRaw": max_in_raw,
-        "meshBias": MESH_BIAS,
         "features": features,
     }
-    os.makedirs("out", exist_ok=True)
-    with open("out/mesh-colorado.json", "w") as f:
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    with open(output_path, "w") as f:
         json.dump(out, f, separators=(",", ":"))
-    print(f"Wrote {len(features)} bands, max {max_in}\" valid {out['validTime']}", file=sys.stderr)
+    print(
+        f"[{product}] Wrote {len(features)} bands, max {max_in}\" valid {out['validTime']}",
+        file=sys.stderr,
+    )
+
+
+def main():
+    errors = []
+
+    # 24-hour max — bias-corrected reference layer
+    try:
+        process_product("MESH_Max_1440min", "out/mesh-colorado.json", bias=MESH_BIAS)
+    except Exception as e:
+        print(f"[MESH_Max_1440min] FAILED: {e}", file=sys.stderr)
+        errors.append(e)
+
+    # 1-hour max — near-real-time nowcast layer (no bias correction; fresher data)
+    try:
+        process_product("MESH_Max_60min", "out/mesh-nowcast.json", bias=1.0)
+    except Exception as e:
+        print(f"[MESH_Max_60min] FAILED: {e}", file=sys.stderr)
+        errors.append(e)
+
+    if len(errors) == 2:
+        raise errors[0]
 
 
 if __name__ == "__main__":
