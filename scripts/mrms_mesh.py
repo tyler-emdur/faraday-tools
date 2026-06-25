@@ -26,6 +26,13 @@ BASE = "https://mrms.ncep.noaa.gov/2D/MESH_Max_1440min/"
 # Colorado bounds (lon in standard -180..180)
 CO = dict(min_lat=36.95, max_lat=41.05, min_lon=-109.06, max_lon=-102.04)
 
+# MRMS MESH estimates the *maximum possible* hail size, so it runs high vs. what
+# actually fell. We apply a mild correction toward ground truth. Kept conservative
+# on purpose: under-calling would hide towns that really got hammered, which is the
+# opposite of what we want for door-knocking. Tune between ~0.7 (aggressive) and
+# 1.0 (raw). 0.85 nudges sizes down without dropping big events out of the top band.
+MESH_BIAS = float(os.environ.get("MESH_BIAS", "0.85"))
+
 # inches -> severity class. 0 is dropped.
 BANDS = [
     (0.75, 1.00, 1, "0.75–1\""),
@@ -85,7 +92,8 @@ def main():
 
     # MESH is in mm; negatives are missing / no-coverage.
     data = np.where(data < 0, 0.0, data)
-    inches = data / 25.4
+    inches_raw = data / 25.4
+    inches = inches_raw * MESH_BIAS
     sev = classify(inches)
 
     dx = abs(float(lons[0, 1] - lons[0, 0]))
@@ -116,12 +124,15 @@ def main():
         })
 
     max_in = round(float(inches.max()), 2) if inches.size else 0.0
+    max_in_raw = round(float(inches_raw.max()), 2) if inches_raw.size else 0.0
     out = {
         "type": "FeatureCollection",
         "generated": datetime.now(timezone.utc).isoformat(),
         "validTime": parse_valid_time(name),
         "source": "NOAA MRMS MESH_Max_1440min (24-hr max estimated hail size)",
         "maxInch": max_in,
+        "maxInchRaw": max_in_raw,
+        "meshBias": MESH_BIAS,
         "features": features,
     }
     os.makedirs("out", exist_ok=True)
