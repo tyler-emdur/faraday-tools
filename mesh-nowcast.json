@@ -1,1 +1,1 @@
-{"type":"FeatureCollection","generated":"2026-07-22T21:16:53.431536+00:00","validTime":"2026-07-22T21:14:00+00:00","product":"MESH_Max_60min","bias":1.0,"maxInch":0.64,"features":[]}
+{"type":"FeatureCollection","generated":"2026-07-22T22:36:14.270072+00:00","validTime":"2026-07-22T22:34:00+00:00","product":"MESH_Max_60min","bias":1.0,"maxInch":0.79,"features":[{"type":"Feature","properties":{"sev":1,"label":"0.75\u20131\""},"geometry":{"type":"Polygon","coordinates":[[[-104.31,39.67],[-104.31,39.66],[-104.28,39.66],[-104.28,39.67],[-104.31,39.67]]]}}]}
